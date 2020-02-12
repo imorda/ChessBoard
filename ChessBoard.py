@@ -1,11 +1,5 @@
 #/usr/bin/env python
 
-#####################################################################
-# ChessBoard v2.05 is created by John Eriksson - http://arainyday.se
-# It's released under the Gnu Public Licence (GPL)
-# Have fun!
-#####################################################################
-
 from copy import deepcopy
 from pprint import pprint
 
