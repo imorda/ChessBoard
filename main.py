@@ -3,6 +3,9 @@ from threading import *
 from bitarray import *
 import time
 import wiringpi
+from ChessBoard import ChessBoard
+
+virtBrd = ChessBoard()
 
 
 class brd(Thread):
@@ -23,11 +26,12 @@ def LedUpdate(list1):
     x = bitarray(8 * 8)
     x.setall(False)
     for i in list1:
-        if (i[0] % 2 == 1):
-            id = i[0] * 8 + i[1]
-        else:
-            id = i[0] * 8 + (7 - i[1])
-        x[id] = 1
+        for j in i:
+            if (j[0] % 2 == 1):
+                id = j[0] * 8 + j[1]
+            else:
+                id = j[0] * 8 + (7 - j[1])
+            x[id] = 1
     SPISend(x.tobytes())
     uart.LEblink()
 
@@ -83,6 +87,7 @@ def handleComputerMoveAction():
 
 
 isRunning = True
+virtBrd.resetBoard()
 boardComm = brd("Board")
 boardComm.start()
 wiringpi.wiringPiSetup()
@@ -90,8 +95,11 @@ wiringpi.wiringPiSPISetup(0, 27000000)
 while True:
     if uart.Array.brdArray != uart.Array.lastShown:
         LedUpdate(uart.Array.brdArray)
+        toShow = list()
+        #for i in uart.Array.brdArray:
+            #toShow.append(virtBrd.getValidMoves(i))
+        #LedUpdate(toShow)
         uart.Array.lastShown = uart.Array.brdArray
 isRunning = False
 # TODO: Add a dedicated thread for interface handling (difficulty, side, start functionality for now)
 # TODO future: interface features: number of players, timer, hints, blitz mode (maybe)
-# TODO 3: Refactor UART comm (all reading move to a dedicated thread with notify() on receive "ok\r\n")

@@ -41,8 +41,12 @@ def Parse(x = b''):
                 value = bitarray()
                 value.frombytes(x[2:])
                 toShow = list()
+                empty = list()
                 for i in range(len(value)):
                         if value[i] == 1:
                                 toShow.append([i % 8, i // 8])
-                Array.brdArray = toShow
+                        else:
+                                empty.append([i%8,i//8])
+                Array.brdArray = [toShow]
+                #Array.brdArray = empty
                 ser.write(b"ok2\n")
