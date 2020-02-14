@@ -6,9 +6,28 @@ import wiringpi
 from ChessBoard import ChessBoard
 import atexit
 import screen
+import RPi.GPIO as gpio
 
+
+class Settings:
+    inactivePeriod = 0  # Timer until the backlight turns off
+    blackTime = 120
+    whiteTime = 120
+    assistLevel = 1
+    chargeOutput = "V"
+    timePunishment = " ON"
+    difficulty = 1
+    mode = "  PLAYER"
+    computerColor = "BLACK"
+    isChanged = False
+
+
+curSettings = Settings
 virtBrd = ChessBoard()
-screenClass = screen.Screen(9999999, 120, 120)
+screenClass = screen.Screen(curSettings.inactivePeriod, curSettings.whiteTime, curSettings.blackTime,
+                            curSettings.timePunishment, curSettings.chargeOutput)
+pins = [13,19,20,21]  # x,ok,right,left
+
 
 class Movements:
     taken = tuple()
@@ -16,6 +35,9 @@ class Movements:
     taketime = 0
     gameOver = -1
     movesShown = False
+    isPressed = 0
+    gameStarted = False
+    gameToStart = False
 
 
 class scrn(Thread):
@@ -27,9 +49,23 @@ class scrn(Thread):
     def run(self):
         while isRunning:
             try:
-                screenClass.RunThread(uart.ScreenArray, Movements.taken)
+                screenClass.RunThread(uart.ScreenArray, Movements.taken, curSettings)
                 if screenClass.gameOver != -1:
                     Movements.gameOver = screenClass.gameOver
+                elif screenClass.gameStarted:
+                    if uart.ScreenArray.gameState == 0:
+                        Movements.gameToStart = True
+                else:
+                    if uart.ScreenArray.gameState != 0:
+                        Movements.gameStarted = False
+                        uart.ScreenArray.gameState = 0
+                        Movements.movesShown = False
+                        uart.ScreenArray.errorState = 0
+                        screenClass.timerActive = False
+                        Movements.enemyTaken = tuple()
+                        Movements.Taken = tuple()
+                        Movements.taketime = 0
+                        LedUpdate([])
                 time.sleep(0.9)
             except:
                 pass
@@ -70,6 +106,7 @@ def highlightWinner(color):
     Movements.gameOver = -1
     Movements.enemyTaken = tuple()
     Movements.taketime = 0
+    Movements.movesShown = False
     toHighlight = list()
     if 0 <= color <= 1:
         for i in uart.Array.brdArray:
@@ -83,7 +120,8 @@ def highlightWinner(color):
         LedUpdate([])
         time.sleep(3)
     uart.ScreenArray.gameState = 0
-    interfaceGameStartEvent()
+    Movements.gameStarted = False
+    screenClass.gameStarted = False
 
 
 def SPISend(buf):
@@ -97,9 +135,11 @@ def SPISend(buf):
 def interfaceGameStartEvent():
     uart.ScreenArray.gameState = 1
     virtBrd.resetBoard()
+    Movements.gameStarted = True
     showErrorAction()
-    gameStartAction()
-    uart.ScreenArray.gameState = 2
+    if Movements.gameStarted:
+        gameStartAction()
+        uart.ScreenArray.gameState = 2
 
 
 def gameStartAction():
@@ -140,7 +180,8 @@ def parseBoardUpdate(board, last):
 
 
 def showMoves(coords):
-    LedUpdate(virtBrd.getValidMoves(coords))
+    if Settings.assistLevel >= 1:
+        LedUpdate(virtBrd.getValidMoves(coords))
     Movements.movesShown = True
 
 
@@ -153,9 +194,14 @@ def onFigureTakenEvent(coords):
 
 def onFigurePlacedEvent(coords):
     singleBlink([coords])
-    if coords[1] == 0 and virtBrd.getColor(Movements.taken[0],Movements.taken[1]) == virtBrd.WHITE and \
+    if ((coords[1] == 0 and virtBrd.getColor(Movements.taken[0],Movements.taken[1]) == virtBrd.WHITE) or
+        (coords[1] == 7 and virtBrd.getColor(Movements.taken[0],Movements.taken[1]) == virtBrd.BLACK)) and \
             isPawn(virtBrd.getBoard(), Movements.taken):
-        virtBrd.setPromotion(screenClass.setPromotion())
+        screenClass.setPromotion()
+        while screenClass.promotion == 0:
+            time.sleep(0.1)
+        virtBrd.setPromotion(screenClass.promotion)
+        screenClass.promotion = 0
     if not virtBrd.addMove(Movements.taken, coords):
         rsn = virtBrd.getReason()
         print("REASON = " + str(rsn))
@@ -208,6 +254,7 @@ def parseExistance(brdModel):
                 parsed.append((i,j))
     return parsed
 
+
 def showErrorAction(keepTaken = False):
     goal = parseExistance(virtBrd.getBoard())
     if keepTaken:
@@ -218,6 +265,8 @@ def showErrorAction(keepTaken = False):
     curState = False
     while goal != uart.Array.brdArray:
         if Movements.gameOver != -1:
+            break
+        if not Movements.gameStarted:
             break
         curTimer = time.perf_counter()
         toBlink = list()
@@ -252,9 +301,30 @@ def handleComputerMoveAction():
     pass  # guide the player to move figure
 
 
+def onPress(channel):
+    if not gpio.input(channel):
+        timer = time.perf_counter()
+        while not gpio.input(channel):
+            time.sleep(0.2)
+        uart.ScreenArray.button = (channel, time.perf_counter() - timer)
+        print(uart.ScreenArray.button)
+
+
+def updateSettings(settings):
+    screenClass.inactiveTime = settings.inactivePeriod
+    #settings.computerColor
+    screenClass.blackTime = settings.blackTime
+    #settings.difficulty
+    screenClass.punish = settings.timePunishment
+    screenClass.charge = settings.chargeOutput
+    screenClass.whiteTime = settings.whiteTime
+    #settings.mode
+
+
 def onDisposeEvent():
     print("Shutting down...")
     LedUpdate([])
+    gpio.cleanup()
 
 
 atexit.register(onDisposeEvent)
@@ -264,23 +334,31 @@ try:
     boardComm.start()
     scrnThread = scrn("Screen")
     scrnThread.start()
+    gpio.setmode(gpio.BCM)
+    for i in pins:
+        gpio.setup(i, gpio.IN, pull_up_down=gpio.PUD_UP)
+        gpio.add_event_detect(i, gpio.FALLING, callback=onPress, bouncetime=50)
     wiringpi.wiringPiSetup()
     wiringpi.wiringPiSPISetup(0, 27000000)
-    interfaceGameStartEvent()
     uart.Array.lastShown = uart.Array.brdArray
+    LedUpdate([])
     while True:
         if Movements.gameOver != -1:
             highlightWinner(Movements.gameOver)
-        if uart.Array.brdArray != uart.Array.lastShown:
+        if Movements.gameToStart:
+            interfaceGameStartEvent()
+            Movements.gameToStart = False
+        if curSettings.isChanged and screenClass.curScreen == 0:
+            updateSettings(curSettings)
+            curSettings.isChanged = False
+        if uart.Array.brdArray != uart.Array.lastShown and Movements.gameStarted:
             # LedUpdate(uart.Array.brdArray)  # Uncomment to test Magnets
             parseBoardUpdate(uart.Array.brdArray, uart.Array.lastShown)
             uart.Array.lastShown = uart.Array.brdArray
         time.sleep(0.01)
-
 except:
     onDisposeEvent()
     isRunning = False
-# TODO: Interface (buttons, menu), (in menu add enable time limit punishment)
-# TODO 2: STOCKFISH
-# TODO future: interface features: number of players, timer
+# TODO: Interface (settings restore, game restore)
+# TODO 2: STOCKFISH, HINT SHOW
 # TODO FAR: blitz mode (maybe)

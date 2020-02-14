@@ -19,6 +19,12 @@ class Array:
 class ScreenArray:
     voltage = float()
     isCharging = bool()
+    button = (0, 0)  # pin, duration
+    # Button pin map:
+    # 13 - x
+    # 19 - ok
+    # 20 - right
+    # 21 - left
     errorState = 0
     gameState = 0
     # GAME STATE:
