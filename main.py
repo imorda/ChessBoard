@@ -7,27 +7,39 @@ from ChessBoard import ChessBoard
 import atexit
 import screen
 import RPi.GPIO as gpio
+import pickle
+from collections import Counter
 
 
 class Settings:
-    inactivePeriod = 0  # Timer until the backlight turns off
-    blackTime = 120
-    whiteTime = 120
-    assistLevel = 1
-    chargeOutput = "V"
-    timePunishment = " ON"
-    difficulty = 1
-    mode = "  PLAYER"
-    computerColor = "BLACK"
-    isChanged = False
+    def __init__(self):
+        self.inactivePeriod = 0  # Timer until the backlight turns off
+        self.blackTime = 120
+        self.whiteTime = 120
+        self.assistLevel = 1
+        self.chargeOutput = "V"
+        self.timePunishment = " ON"
+        self.difficulty = 3
+        self.mode = "  PLAYER"
+        self.computerColor = "BLACK"
+        self.isChanged = False
 
 
-curSettings = Settings
+try:
+    file = open("settings.brd", 'rb')
+    curSettings = pickle.load(file)
+    file.close()
+except:
+    curSettings = Settings()
+    print("Reading failed")
+
 virtBrd = ChessBoard()
 screenClass = screen.Screen(curSettings.inactivePeriod, curSettings.whiteTime, curSettings.blackTime,
                             curSettings.timePunishment, curSettings.chargeOutput)
 pins = [13,19,20,21]  # x,ok,right,left
-
+loader = {"p": "Put black pawn", "k": "Put black king", "r": "Put black rook", "b": "Put black bishop",
+          "q": "Put black queen", "n": "Put black knight", "P": "Put white pawn", "K": "Put white king",
+          "R": "Put white rook", "B": "Put white bishop", "Q": "Put white queen", "N": "Put white knight"}
 
 class Movements:
     taken = tuple()
@@ -66,6 +78,9 @@ class scrn(Thread):
                         Movements.Taken = tuple()
                         Movements.taketime = 0
                         LedUpdate([])
+                if screenClass.haveToDump:
+                    dumpGame()
+                    screenClass.haveToDump = False
                 time.sleep(0.9)
             except:
                 pass
@@ -154,6 +169,16 @@ def singleBlink(coordsList):
     pass  # Blink LEDs once
 
 
+def dumpGame():
+    moves = virtBrd.getAllTextMoves(0)
+    try:
+        file = open("Saved game.brd", 'wb')
+        pickle.dump(moves, file)
+        file.close()
+    except:
+        print("Saving failed")
+
+
 def parseBoardUpdate(board, last):
     for i in last:
         if i not in board:
@@ -180,7 +205,7 @@ def parseBoardUpdate(board, last):
 
 
 def showMoves(coords):
-    if Settings.assistLevel >= 1:
+    if curSettings.assistLevel >= 1:
         LedUpdate(virtBrd.getValidMoves(coords))
     Movements.movesShown = True
 
@@ -246,24 +271,30 @@ def isPawn(brdModel, coords):
         return False
 
 
-def parseExistance(brdModel):
+def parseExistance(brdModel, filter = ''):
     parsed = list()
     for j in range(8):
         for i in range(8):
-            if brdModel[j][i] != '.':
-                parsed.append((i,j))
+            if filter == '':
+                if brdModel[j][i] != '.':
+                    parsed.append((i,j))
+            elif brdModel[j][i] == filter:
+                    parsed.append((i,j))
     return parsed
 
 
-def showErrorAction(keepTaken = False):
-    goal = parseExistance(virtBrd.getBoard())
+def showErrorAction(keepTaken = False, customgoal = None):
+    if customgoal != None:
+        goal = customgoal
+    else:
+        goal = parseExistance(virtBrd.getBoard())
     if keepTaken:
         goal.remove(Movements.taken)
     startTimer = time.perf_counter()
     emitPeriod = 0.3
     waitPeriod = 0.5
     curState = False
-    while goal != uart.Array.brdArray:
+    while not compare(goal, uart.Array.brdArray):
         if Movements.gameOver != -1:
             break
         if not Movements.gameStarted:
@@ -310,6 +341,40 @@ def onPress(channel):
         print(uart.ScreenArray.button)
 
 
+def interfaceGameLoadEvent():
+    try:
+        file = open("Saved game.brd", 'rb')
+        movements = pickle.load(file)
+        file.close()
+    except:
+        uart.ScreenArray.gameState = 0
+        print("Reading failed")
+        return
+    virtBrd.resetBoard()
+    for i in movements:
+        if not virtBrd.addTextMove(i):
+            print("Restore failed")
+            uart.ScreenArray.gameState = 0
+            return
+    uart.ScreenArray.gameState = 11
+    screenClass.gameStarted = True
+    Movements.gameStarted = True
+    goal = list()
+    for i in loader:
+        screenClass.toShow = loader[i]
+        goal.extend(parseExistance(virtBrd.getBoard(), filter=i))
+        showErrorAction(customgoal=goal)
+    showErrorAction()
+    if Movements.gameStarted:
+        gameStartAction()
+        uart.ScreenArray.gameState = virtBrd.getTurn() + 2
+    pass
+
+
+def compare(s, t):
+    return Counter(s) == Counter(t)
+
+
 def updateSettings(settings):
     screenClass.inactiveTime = settings.inactivePeriod
     #settings.computerColor
@@ -319,7 +384,12 @@ def updateSettings(settings):
     screenClass.charge = settings.chargeOutput
     screenClass.whiteTime = settings.whiteTime
     #settings.mode
-
+    try:
+        file = open("settings.brd", 'wb')
+        pickle.dump(settings, file)
+        file.close()
+    except:
+        print("Saving failed")
 
 def onDisposeEvent():
     print("Shutting down...")
@@ -351,6 +421,9 @@ try:
         if curSettings.isChanged and screenClass.curScreen == 0:
             updateSettings(curSettings)
             curSettings.isChanged = False
+        if screenClass.haveToLoad:
+            interfaceGameLoadEvent()
+            screenClass.haveToLoad = False
         if uart.Array.brdArray != uart.Array.lastShown and Movements.gameStarted:
             # LedUpdate(uart.Array.brdArray)  # Uncomment to test Magnets
             parseBoardUpdate(uart.Array.brdArray, uart.Array.lastShown)
@@ -359,6 +432,5 @@ try:
 except:
     onDisposeEvent()
     isRunning = False
-# TODO: Interface (settings restore, game restore)
-# TODO 2: STOCKFISH, HINT SHOW
+# TODO: STOCKFISH, HINT SHOW
 # TODO FAR: blitz mode (maybe)

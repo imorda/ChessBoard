@@ -1,6 +1,7 @@
 import I2C_LCD_driver
 import time
 import math
+import os.path
 
 
 def CalculateBatteryIcon(voltage):
@@ -36,6 +37,7 @@ class Screen:
     punish = "OFF"
     selectedItem = None
     timerActive = False
+    haveToLoad = False
     charge = "%"
     drawnState = -1
     whiteTime = 120
@@ -44,7 +46,10 @@ class Screen:
     menuPosition = 1
     lastPos = 1
     gameStarted = False
+    toShow = ''
+    lastShown = ''
     blackTime = 6
+    haveToDump = False
     lastActiveTime = time.perf_counter()
     customChars = [
         [0b01110,
@@ -145,14 +150,16 @@ class Screen:
                     if not self.gameStarted:
                         self.gameStarted = True
                     else:
+                        self.switchScreen(5)
                         pass  # show dialog to save this game
                 else:
+                    self.switchScreen(6)
                     pass  # restore last game (or show error screen)
             elif screenInfo.button[0] == 13:
                 if screenInfo.gameState == 0:
                     self.switchScreen(3)
                     pass  # enter settings
-                elif screenInfo.gameState == 1:
+                elif screenInfo.gameState == 1 or screenInfo.gameState == 11:
                     self.gameStarted = False
                 else:
                     self.switchScreen(1)
@@ -163,7 +170,7 @@ class Screen:
         elif self.curScreen == 1:  # game delete dialog
             if not self.drawn:
                 self.printDialog("Do you want to",1)
-                self.printDialog("erase this game?",2)
+                self.printDialog("ERASE this game?",2)
                 self.drawn = True
             if screenInfo.button[0] == 19:
                 self.gameStarted = False
@@ -230,6 +237,34 @@ class Screen:
             elif screenInfo.button[0] == 19:
                 self.updateClass(generalSettings, self.selectedItem[1][self.selectedItem[2]])
                 self.switchScreen(3)
+        elif self.curScreen == 5:  # game save dialog
+            if not self.drawn:
+                self.printDialog("Do you want to",1)
+                self.printDialog("save this game?",2)
+                self.drawn = True
+            if screenInfo.button[0] == 19:
+                self.haveToDump = True
+                self.gameStarted = False
+                self.switchScreen(0)
+            elif screenInfo.button[0] == 13:
+                self.dontReset = True
+                self.switchScreen(0)
+        elif self.curScreen == 6:  # game load dialog
+            if not self.drawn:
+                if os.path.isfile('Saved game.brd'):
+                    self.printDialog("Do you want to", 1)
+                    self.printDialog("load last game?", 2)
+                    self.drawn = True
+                else:
+                    self.printDialog("No saved",1)
+                    self.printDialog("games found",2)
+                    time.sleep(1)
+                    self.switchScreen(0)
+            if screenInfo.button[0] == 19:
+                self.haveToLoad = True
+                self.switchScreen(0)
+            elif screenInfo.button[0] == 13:
+                self.switchScreen(0)
         if screenInfo.button != (0, 0):
             self.lastActiveTime = time.perf_counter()
             screenInfo.button = (0, 0)
@@ -367,7 +402,7 @@ class Screen:
             self.drawState(screenInfo.gameState)
             self.drawnState = screenInfo.gameState
             screenInfo.errorState = 0
-        elif screenInfo.gameState != self.drawnState and screenInfo.gameState != -1:
+        elif (screenInfo.gameState != self.drawnState or self.toShow != self.lastShown) and screenInfo.gameState != -1:
             self.lcd.lcd_display_string("                ", 2)
             self.timerActive = False
             self.drawState(screenInfo.gameState)
@@ -441,6 +476,11 @@ class Screen:
                 self.startClock(self.blackTime)
             self.timerActive = True
             self.dontReset = False
+        elif state == 11:
+            if self.lastShown != self.toShow:
+                self.lastShown = self.toShow
+                self.printState(self.toShow)
+                self.singleBlink()
 
     def setTurn(self,color):
         if color == 0:

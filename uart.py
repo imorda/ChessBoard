@@ -39,6 +39,7 @@ class ScreenArray:
     # 8 - draw (50 moves rule)!
     # 9 - draw (3 repetitions rule)!
     # 10 - check (black turn)!
+    # 11 - Game restoring
 
 
 def RunThread():
