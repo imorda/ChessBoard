@@ -40,6 +40,7 @@ class ScreenArray:
     # 9 - draw (3 repetitions rule)!
     # 10 - check (black turn)!
     # 11 - Game restoring
+    # 12 - Bot playing
 
 
 def RunThread():

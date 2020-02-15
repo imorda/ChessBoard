@@ -31,19 +31,23 @@ class Screen:
     gameOver = -1
     lastBatteryIcon = -1
     lastChargingState = False
+    hintUsed = False
     curTurn = 0
     lit = True
     timerEnd = 0
     paused = False
     punish = "OFF"
+    curHint = ''
     selectedItem = None
     timerActive = False
     haveToLoad = False
+    hintAvailable = False
     charge = "%"
     toSetPromotion = False
     drawnState = -1
     whiteTime = 120
     takenDrawn = tuple()
+    noBlink = False
     taken = tuple()
     menuPosition = 1
     lastPos = 1
@@ -120,16 +124,26 @@ class Screen:
          0b10100,
          0b11000]
     ]
+    timeRange = list()
+    for i in range(1, 10):
+        timeRange.append(i)
+
+    for i in range(10, 100, 5):
+        timeRange.append(i)
+
+    for i in range(100, 1000, 30):
+        timeRange.append(i)
+    timeRange.append(999)
     rangeList = [
         range(21),  # difficulty
         ["  PLAYER", "COMPUTER"],  # modes
-        range(0,1000,2),  # whites time
-        range(0,1000,2),  # blacks time
+        timeRange,  # whites time
+        timeRange,  # blacks time
         range(3),  # assist level
         ["V", "%"],  # charge format
         [" ON", "OFF"],  # time punishment
         range(0, 1000, 15),  # inactive period
-        ["BLACK","WHITE"]
+        ["BLACK","WHITE", " BOTH"]
     ]
 
     lcd.lcd_load_custom_chars(customChars)
@@ -155,13 +169,13 @@ class Screen:
                     if not self.gameStarted:
                         self.gameStarted = True
                     else:
-                        if 2 <= screenInfo.gameState <= 4 or screenInfo.gameState == 10:
+                        if (2 <= screenInfo.gameState <= 4 or screenInfo.gameState == 10) and not self.hintUsed:
                             self.paused = not self.paused
                         pass  # pause the game
                 elif not self.gameStarted:
                     self.switchScreen(6)
                     pass  # restore last game (or show error screen)
-                elif 2 <= screenInfo.gameState <= 4 or screenInfo.gameState == 10:
+                elif 2 <= screenInfo.gameState <= 4 or screenInfo.gameState == 10 or screenInfo.gameState == 12:
                     self.switchScreen(5)  # show dialog to save this game
             elif screenInfo.button[0] == 13:
                 if screenInfo.gameState == 0:
@@ -172,9 +186,12 @@ class Screen:
                 else:
                     self.switchScreen(1)
                     pass  # show dialog to delete this game
+            elif (screenInfo.button[0] == 20 or screenInfo.button[0] == 21) and screenInfo.button[1] >= 1.2 \
+                    and self.hintAvailable:
+                self.useHint()
             else:
-                self.DrawHome(screenInfo)
-                self.runClock()
+                self.DrawHome(screenInfo, generalSettings)
+                self.runClock(generalSettings)
         elif self.curScreen == 1:  # game delete dialog
             if not self.drawn:
                 self.printDialog("Do you want to",1)
@@ -279,6 +296,12 @@ class Screen:
             self.lastActiveTime = time.perf_counter()
             screenInfo.button = (0, 0)
 
+    def useHint(self):
+        self.paused = False
+        self.hintUsed = True
+        self.hintAvailable = False
+        self.setTurn(self.curTurn)
+
     def updateClass(self, settings, value):
         if self.menuPosition == 1:
             settings.difficulty = value
@@ -367,7 +390,7 @@ class Screen:
         self.drawnState = -1
         self.lcd.lcd_clear()
 
-    def DrawHome(self, screenInfo):
+    def DrawHome(self, screenInfo, settings):
         if not self.drawn:
             self.ClearScreen()
         self.lcd.lcd_display_string(str(time.localtime()[3]).zfill(2) + ":" + str(time.localtime()[4]).zfill(2), 1)
@@ -409,16 +432,21 @@ class Screen:
             self.lcd.lcd_display_string("                ", 2)
             self.drawError(screenInfo.errorState)
             self.lcd.lcd_display_string("                ", 2)
-            self.drawState(screenInfo.gameState)
+            self.drawState(screenInfo.gameState, settings)
             self.drawnState = screenInfo.gameState
             screenInfo.errorState = 0
         elif (screenInfo.gameState != self.drawnState or self.toShow != self.lastShown) and screenInfo.gameState != -1:
+            chngState = False
+            if screenInfo.gameState != self.drawnState:
+                chngState = True
+            self.drawnState = screenInfo.gameState
             self.lcd.lcd_display_string("                ", 2)
             self.timerActive = False
-            self.drawState(screenInfo.gameState)
-            self.drawnState = screenInfo.gameState
+            self.drawState(screenInfo.gameState, settings, chngState)
 
-    def drawState(self, state):
+    def drawState(self, state, settings, chngState=False):
+        if chngState:
+            self.hintAvailable = False
         if state == 0:
             self.printState("Idle")
         elif state == 1:
@@ -427,14 +455,14 @@ class Screen:
             self.setTurn(0)
             if not self.timerActive and not self.dontReset:
                 self.timerActive = True
-                self.startClock(self.whiteTime)
+                self.startClock(self.whiteTime, settings)
             self.timerActive = True
             self.dontReset = False
         elif state == 3:
             self.setTurn(1)
             if not self.timerActive and not self.dontReset:
                 self.timerActive = True
-                self.startClock(self.blackTime)
+                self.startClock(self.blackTime, settings)
             self.timerActive = True
             self.dontReset = False
         elif state == 5:
@@ -471,7 +499,7 @@ class Screen:
             self.setTurn(0)
             if not self.timerActive and not self.dontReset:
                 self.timerActive = True
-                self.startClock(self.whiteTime)
+                self.startClock(self.whiteTime, settings)
             self.timerActive = True
             self.dontReset = False
         elif state == 10:
@@ -483,7 +511,7 @@ class Screen:
             self.setTurn(1)
             if not self.timerActive and not self.dontReset:
                 self.timerActive = True
-                self.startClock(self.blackTime)
+                self.startClock(self.blackTime, settings)
             self.timerActive = True
             self.dontReset = False
         elif state == 11:
@@ -491,40 +519,65 @@ class Screen:
                 self.lastShown = self.toShow
                 self.printState(self.toShow)
                 self.singleBlink()
+        elif state == 12:
+            if self.lastShown != self.toShow:
+                self.lastShown = self.toShow
+                self.printState(self.toShow)
+                if self.noBlink:
+                    self.noBlink = False
+                else:
+                    self.singleBlink()
 
     def setTurn(self,color):
-        if color == 0:
-            self.lcd.lcd_display_string_pos('*',2,0)
-            self.curTurn = 0
-        elif color == 1:
-            self.lcd.lcd_display_string_pos('*', 2, 15)
-            self.curTurn = 1
+        if self.hintAvailable:
+            if color == 0:
+                self.lcd.lcd_display_string_pos('+',2,0)
+                self.curTurn = 0
+                self.singleBlink(0.8)
+            elif color == 1:
+                self.lcd.lcd_display_string_pos('+', 2, 15)
+                self.curTurn = 1
+                self.singleBlink(0.8)
         else:
-            self.lcd.lcd_display_string_pos('*', 2, 0)
-            self.lcd.lcd_display_string_pos('*', 2, 15)
+            if color == 0:
+                self.lcd.lcd_display_string_pos('*',2,0)
+                self.curTurn = 0
+            elif color == 1:
+                self.lcd.lcd_display_string_pos('*', 2, 15)
+                self.curTurn = 1
+            else:
+                self.lcd.lcd_display_string_pos('*', 2, 0)
+                self.lcd.lcd_display_string_pos('*', 2, 15)
         pass  # draw a star to show who is playing right now
 
-    def startClock(self, duration):
+    def startClock(self, duration, settings):
         self.timerEnd = time.perf_counter() + duration
         self.timerActive = True
-        self.runClock()
+        self.runClock(settings)
         pass  # start countdown
 
-    def runClock(self):
+    def runClock(self, settings):
         seconds = int(self.timerEnd - time.perf_counter())
-        if self.paused:
+        if self.paused or self.hintUsed:
             seconds = self.lastClock
             self.timerEnd = time.perf_counter() + self.lastClock
             self.lcd.lcd_display_string_pos("PAUSE", 2, 5)
         elif self.timerActive:
             if seconds > 0:
                 self.lcd.lcd_display_string_pos(str(seconds // 60).zfill(2) + ":" + str(seconds % 60).zfill(2), 2, 5)
+                if self.curTurn == 0:
+                    overall = settings.whiteTime
+                else:
+                    overall = settings.blackTime
+                if seconds < overall/2 and not self.hintAvailable and self.curHint != '' and settings.assistLevel == 2:
+                    self.hintAvailable = True
+                    self.setTurn(self.curTurn)
             else:
                 self.lcd.lcd_display_string_pos("00:00", 2, 5)
                 self.singleBlink()
                 if self.punish == " ON":
                     self.lcd.lcd_display_string("                ", 2)
-                    self.drawState(self.curTurn*(-1) + 6)
+                    self.drawState(self.curTurn*(-1) + 6, settings, chngState=True)
         self.lastClock = seconds
         pass
 
