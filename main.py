@@ -9,6 +9,7 @@ import screen
 import RPi.GPIO as gpio
 import pickle
 from collections import Counter
+from copy import copy
 
 
 class Settings:
@@ -50,6 +51,7 @@ class Movements:
     isPressed = 0
     gameStarted = False
     gameToStart = False
+    promotionList = list()
 
 
 class scrn(Thread):
@@ -62,6 +64,9 @@ class scrn(Thread):
         while isRunning:
             try:
                 screenClass.RunThread(uart.ScreenArray, Movements.taken, curSettings)
+                if screenClass.haveToDump:
+                    dumpGame()
+                    screenClass.haveToDump = False
                 if screenClass.gameOver != -1:
                     Movements.gameOver = screenClass.gameOver
                 elif screenClass.gameStarted:
@@ -76,11 +81,9 @@ class scrn(Thread):
                         screenClass.timerActive = False
                         Movements.enemyTaken = tuple()
                         Movements.Taken = tuple()
+                        Movements.promotionList = list()
                         Movements.taketime = 0
                         LedUpdate([])
-                if screenClass.haveToDump:
-                    dumpGame()
-                    screenClass.haveToDump = False
                 time.sleep(0.9)
             except:
                 pass
@@ -117,6 +120,7 @@ def highlightWinner(color):
     uart.ScreenArray.errorState = 0
     screenClass.timerActive = False
     screenClass.gameOver = -1
+    Movements.promotionList = list()
     Movements.taken = tuple()
     Movements.gameOver = -1
     Movements.enemyTaken = tuple()
@@ -173,35 +177,38 @@ def dumpGame():
     moves = virtBrd.getAllTextMoves(0)
     try:
         file = open("Saved game.brd", 'wb')
-        pickle.dump(moves, file)
+        pickle.dump((moves, Movements.promotionList), file)
         file.close()
     except:
         print("Saving failed")
 
 
 def parseBoardUpdate(board, last):
-    for i in last:
-        if i not in board:
-            friendly = (virtBrd.getColor(i[0], i[1]) == virtBrd.getTurn())
-            if len(Movements.taken) == 0:
-                if friendly and len(virtBrd.getValidMoves(i)) > 0:
-                    onFigureTakenEvent(i)
+    if screenClass.paused:
+        showErrorAction(True)
+    else:
+        for i in last:
+            if i not in board:
+                friendly = (virtBrd.getColor(i[0], i[1]) == virtBrd.getTurn())
+                if len(Movements.taken) == 0:
+                    if friendly and len(virtBrd.getValidMoves(i)) > 0:
+                        onFigureTakenEvent(i)
+                    else:
+                        showErrorAction()
+                elif not friendly:
+                    Movements.enemyTaken = i
                 else:
-                    showErrorAction()
-            elif not friendly:
-                Movements.enemyTaken = i
-            else:
-                showErrorAction(True)
-    for i in board:
-        if i not in last and len(last) > 0:
-            if len(Movements.taken) == 0:
-                showErrorAction()
-            elif i == Movements.taken:
-                if time.perf_counter() - Movements.taketime > 1:
                     showErrorAction(True)
-            else:
-                onFigurePlacedEvent(i)
-            pass  # check what actually had changed on the board; if new figures - make sure that there are no overlaps.
+        for i in board:
+            if i not in last and len(last) > 0:
+                if len(Movements.taken) == 0:
+                    showErrorAction()
+                elif i == Movements.taken:
+                    if time.perf_counter() - Movements.taketime > 1:
+                        showErrorAction(True)
+                else:
+                    onFigurePlacedEvent(i)
+                pass  # check what actually had changed on the board; if new figures - make sure that there are no overlaps.
 
 
 def showMoves(coords):
@@ -222,10 +229,11 @@ def onFigurePlacedEvent(coords):
     if ((coords[1] == 0 and virtBrd.getColor(Movements.taken[0],Movements.taken[1]) == virtBrd.WHITE) or
         (coords[1] == 7 and virtBrd.getColor(Movements.taken[0],Movements.taken[1]) == virtBrd.BLACK)) and \
             isPawn(virtBrd.getBoard(), Movements.taken):
-        screenClass.setPromotion()
+        screenClass.toSetPromotion = True
         while screenClass.promotion == 0:
             time.sleep(0.1)
         virtBrd.setPromotion(screenClass.promotion)
+        Movements.promotionList.append(screenClass.promotion)
         screenClass.promotion = 0
     if not virtBrd.addMove(Movements.taken, coords):
         rsn = virtBrd.getReason()
@@ -288,7 +296,7 @@ def showErrorAction(keepTaken = False, customgoal = None):
         goal = customgoal
     else:
         goal = parseExistance(virtBrd.getBoard())
-    if keepTaken:
+    if keepTaken and len(Movements.taken) == 2:
         goal.remove(Movements.taken)
     startTimer = time.perf_counter()
     emitPeriod = 0.3
@@ -344,7 +352,10 @@ def onPress(channel):
 def interfaceGameLoadEvent():
     try:
         file = open("Saved game.brd", 'rb')
-        movements = pickle.load(file)
+        info = pickle.load(file)
+        movements = info[0]
+        Movements.promotionList = info[1]
+        promotions = copy(info[1])
         file.close()
     except:
         uart.ScreenArray.gameState = 0
@@ -353,9 +364,17 @@ def interfaceGameLoadEvent():
     virtBrd.resetBoard()
     for i in movements:
         if not virtBrd.addTextMove(i):
-            print("Restore failed")
-            uart.ScreenArray.gameState = 0
-            return
+            if virtBrd.getReason() == 5:
+                virtBrd.setPromotion(promotions.pop(0))
+                if not virtBrd.addTextMove(i):
+                    print("Promote failed")
+                    uart.ScreenArray.gameState = 0
+                    return
+            else:
+                print("Restore failed")
+                uart.ScreenArray.gameState = 0
+                return
+        virtBrd.setPromotion(0)
     uart.ScreenArray.gameState = 11
     screenClass.gameStarted = True
     Movements.gameStarted = True
@@ -367,8 +386,15 @@ def interfaceGameLoadEvent():
     showErrorAction()
     if Movements.gameStarted:
         gameStartAction()
-        uart.ScreenArray.gameState = virtBrd.getTurn() + 2
-    pass
+        if not virtBrd.isCheck():
+            uart.ScreenArray.gameState = virtBrd.getTurn() + 2
+        else:
+            if virtBrd.getTurn() == 0:
+                uart.ScreenArray.gameState = 4
+            else:
+                uart.ScreenArray.gameState = 10
+    screenClass.toShow = ''
+    screenClass.lastShown = ''
 
 
 def compare(s, t):
@@ -399,38 +425,38 @@ def onDisposeEvent():
 
 atexit.register(onDisposeEvent)
 isRunning = True
-try:
-    boardComm = brd("Board")
-    boardComm.start()
-    scrnThread = scrn("Screen")
-    scrnThread.start()
-    gpio.setmode(gpio.BCM)
-    for i in pins:
-        gpio.setup(i, gpio.IN, pull_up_down=gpio.PUD_UP)
-        gpio.add_event_detect(i, gpio.FALLING, callback=onPress, bouncetime=50)
-    wiringpi.wiringPiSetup()
-    wiringpi.wiringPiSPISetup(0, 27000000)
-    uart.Array.lastShown = uart.Array.brdArray
-    LedUpdate([])
-    while True:
-        if Movements.gameOver != -1:
-            highlightWinner(Movements.gameOver)
-        if Movements.gameToStart:
-            interfaceGameStartEvent()
-            Movements.gameToStart = False
-        if curSettings.isChanged and screenClass.curScreen == 0:
-            updateSettings(curSettings)
-            curSettings.isChanged = False
-        if screenClass.haveToLoad:
-            interfaceGameLoadEvent()
-            screenClass.haveToLoad = False
-        if uart.Array.brdArray != uart.Array.lastShown and Movements.gameStarted:
-            # LedUpdate(uart.Array.brdArray)  # Uncomment to test Magnets
-            parseBoardUpdate(uart.Array.brdArray, uart.Array.lastShown)
-            uart.Array.lastShown = uart.Array.brdArray
-        time.sleep(0.01)
-except:
-    onDisposeEvent()
-    isRunning = False
+#try:
+boardComm = brd("Board")
+boardComm.start()
+scrnThread = scrn("Screen")
+scrnThread.start()
+gpio.setmode(gpio.BCM)
+for i in pins:
+    gpio.setup(i, gpio.IN, pull_up_down=gpio.PUD_UP)
+    gpio.add_event_detect(i, gpio.FALLING, callback=onPress, bouncetime=50)
+wiringpi.wiringPiSetup()
+wiringpi.wiringPiSPISetup(0, 27000000)
+uart.Array.lastShown = uart.Array.brdArray
+LedUpdate([])
+while True:
+    if Movements.gameOver != -1:
+        highlightWinner(Movements.gameOver)
+    if Movements.gameToStart:
+        interfaceGameStartEvent()
+        Movements.gameToStart = False
+    if curSettings.isChanged and screenClass.curScreen == 0:
+        updateSettings(curSettings)
+        curSettings.isChanged = False
+    if screenClass.haveToLoad:
+        interfaceGameLoadEvent()
+        screenClass.haveToLoad = False
+    if uart.Array.brdArray != uart.Array.lastShown and Movements.gameStarted:
+        # LedUpdate(uart.Array.brdArray)  # Uncomment to test Magnets
+        parseBoardUpdate(uart.Array.brdArray, uart.Array.lastShown)
+        uart.Array.lastShown = uart.Array.brdArray
+    time.sleep(0.01)
+#except:
+    #onDisposeEvent()
+    #isRunning = False
 # TODO: STOCKFISH, HINT SHOW
 # TODO FAR: blitz mode (maybe)

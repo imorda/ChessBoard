@@ -34,11 +34,13 @@ class Screen:
     curTurn = 0
     lit = True
     timerEnd = 0
+    paused = False
     punish = "OFF"
     selectedItem = None
     timerActive = False
     haveToLoad = False
     charge = "%"
+    toSetPromotion = False
     drawnState = -1
     whiteTime = 120
     takenDrawn = tuple()
@@ -46,6 +48,7 @@ class Screen:
     menuPosition = 1
     lastPos = 1
     gameStarted = False
+    lastClock = 0
     toShow = ''
     lastShown = ''
     blackTime = 6
@@ -144,17 +147,22 @@ class Screen:
     def RunThread(self, screenInfo, taken, generalSettings):
         self.taken = taken
         self.brightnessController(screenInfo)
+        if self.toSetPromotion:
+            self.setPromotion()
         if self.curScreen == 0:  # dashboard
             if screenInfo.button[0] == 19:
                 if screenInfo.button[1] < 1.2:
                     if not self.gameStarted:
                         self.gameStarted = True
                     else:
-                        self.switchScreen(5)
-                        pass  # show dialog to save this game
-                else:
+                        if 2 <= screenInfo.gameState <= 4 or screenInfo.gameState == 10:
+                            self.paused = not self.paused
+                        pass  # pause the game
+                elif not self.gameStarted:
                     self.switchScreen(6)
                     pass  # restore last game (or show error screen)
+                elif 2 <= screenInfo.gameState <= 4 or screenInfo.gameState == 10:
+                    self.switchScreen(5)  # show dialog to save this game
             elif screenInfo.button[0] == 13:
                 if screenInfo.gameState == 0:
                     self.switchScreen(3)
@@ -174,6 +182,7 @@ class Screen:
                 self.drawn = True
             if screenInfo.button[0] == 19:
                 self.gameStarted = False
+                self.paused = False
                 self.switchScreen(0)
             elif screenInfo.button[0] == 13:
                 self.dontReset = True
@@ -244,6 +253,7 @@ class Screen:
                 self.drawn = True
             if screenInfo.button[0] == 19:
                 self.haveToDump = True
+                self.paused = False
                 self.gameStarted = False
                 self.switchScreen(0)
             elif screenInfo.button[0] == 13:
@@ -371,7 +381,7 @@ class Screen:
             elif screenInfo.voltage > 4.2:
                 value = "100"
             else:
-                value = str(round((screenInfo.voltage - 2.3) * 52.6315789)).rjust(4,' ')
+                value = str(round(screenInfo.voltage * 108.88889 - 358.333337)).rjust(4,' ')
             self.lcd.lcd_display_string_pos(value, 1, 16 - len(value) - 3)
         if self.lastChargingState != screenInfo.isCharging:
             if screenInfo.isCharging:
@@ -502,7 +512,11 @@ class Screen:
 
     def runClock(self):
         seconds = int(self.timerEnd - time.perf_counter())
-        if self.timerActive:
+        if self.paused:
+            seconds = self.lastClock
+            self.timerEnd = time.perf_counter() + self.lastClock
+            self.lcd.lcd_display_string_pos("PAUSE", 2, 5)
+        elif self.timerActive:
             if seconds > 0:
                 self.lcd.lcd_display_string_pos(str(seconds // 60).zfill(2) + ":" + str(seconds % 60).zfill(2), 2, 5)
             else:
@@ -511,7 +525,7 @@ class Screen:
                 if self.punish == " ON":
                     self.lcd.lcd_display_string("                ", 2)
                     self.drawState(self.curTurn*(-1) + 6)
-
+        self.lastClock = seconds
         pass
 
     def drawError(self, error):
@@ -534,6 +548,7 @@ class Screen:
     def setPromotion(self):
         self.switchScreen(2)
         self.singleBlink(0.2,2)
+        self.toSetPromotion = False
 
     def singleBlink(self, period=0.5, cycles=1):
         for i in range(cycles):
