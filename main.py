@@ -12,7 +12,7 @@ from collections import Counter
 from copy import copy
 import subprocess
 import signal
-
+import sounds
 
 class Settings:
     def __init__(self):
@@ -26,6 +26,7 @@ class Settings:
         self.mode = "COMPUTER"
         self.computerColor = "BLACK"
         self.isChanged = False
+        self.beep = " ON"
 
 
 try:
@@ -37,6 +38,7 @@ except:
     print("Reading failed")
 
 virtBrd = ChessBoard()
+sounds.enabled = curSettings.beep
 screenClass = screen.Screen(curSettings.inactivePeriod, curSettings.whiteTime, curSettings.blackTime,
                             curSettings.timePunishment, curSettings.chargeOutput)
 pins = [13, 19, 20, 21]  # x,ok,right,left
@@ -75,6 +77,12 @@ class scrn(Thread):
                 if screenClass.haveToDump:
                     dumpGame()
                     screenClass.haveToDump = False
+                if screenClass.toPlay == 1:
+                    sounds.playEvent(sounds.SCREENERROR)
+                    screenClass.toPlay = 0
+                elif screenClass.toPlay == 2:
+                    sounds.playEvent(sounds.SCREENNOTIFY)
+                    screenClass.toPlay = 0
                 if screenClass.gameOver != -1:
                     Movements.gameOver = screenClass.gameOver
                 elif screenClass.gameStarted:
@@ -126,6 +134,7 @@ def LedUpdate(list1):
 
 
 def highlightWinner(color):
+    sounds.playEvent(sounds.GAMEOVER)
     uart.ScreenArray.gameState = -1
     uart.ScreenArray.errorState = 0
     screenClass.timerActive = False
@@ -181,6 +190,7 @@ def interfaceGameStartEvent():
 
 
 def gameStartAction():
+    sounds.playEvent(sounds.GAMESTART)
     singleBlink(parseExistance(virtBrd.getBoard()))
     pass  # Start the game by blinking all not empty boxes once
 
@@ -286,8 +296,14 @@ def parseBoardUpdate(board, last):
                 if len(Movements.taken) == 0:
                     showErrorAction()
                 elif i == Movements.taken:
-                    if time.perf_counter() - Movements.taketime > 1:
+                    if time.perf_counter() - Movements.taketime > 0.5:
                         showErrorAction(True)
+                    else:
+                        Movements.movesShown = False
+                        LedUpdate([])
+                        Movements.taken = tuple()
+                        Movements.enemyTaken = tuple()
+                        showErrorAction()
                 else:
                     onFigurePlacedEvent(i)
                 pass  # check what actually had changed on the board; if new figures - make sure that there are no overlaps.
@@ -323,6 +339,7 @@ def onFigurePlacedEvent(coords):
         uart.ScreenArray.errorState = rsn
         showErrorAction(True)
     else:
+        sounds.playEvent(sounds.NEXTTURN)
         screenClass.curHint = ''
         Movements.taken = tuple()
         Movements.enemyTaken = tuple()
@@ -423,6 +440,7 @@ def showErrorAction(keepTaken=False, customgoal=None):
             curState = False
             startTimer = curTimer
         elif not curState and curTime > waitPeriod:
+            sounds.playEvent(sounds.LEDERROR)
             LedUpdate(toBlink)
             waitPeriod = 1
             curState = True
@@ -652,6 +670,7 @@ def updateSettings(settings):
     screenClass.punish = settings.timePunishment
     screenClass.charge = settings.chargeOutput
     screenClass.whiteTime = settings.whiteTime
+    sounds.enabled = settings.beep
     try:
         file = open("settings.brd", 'wb')
         pickle.dump(settings, file)

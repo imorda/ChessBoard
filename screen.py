@@ -42,6 +42,7 @@ class Screen:
     timerActive = False
     haveToLoad = False
     hintAvailable = False
+    toPlay = 0
     charge = "%"
     toSetPromotion = False
     drawnState = -1
@@ -143,7 +144,8 @@ class Screen:
         ["V", "%"],  # charge format
         [" ON", "OFF"],  # time punishment
         range(0, 1000, 15),  # inactive period
-        ["BLACK","WHITE", " BOTH"]
+        ["BLACK","WHITE", " BOTH"],  # computer color
+        [" ON", "OFF"]  # beep
     ]
 
     lcd.lcd_load_custom_chars(customChars)
@@ -224,7 +226,7 @@ class Screen:
         elif self.curScreen == 3:  # menu
             self.DrawMenu(generalSettings)
             if screenInfo.button[0] == 20:
-                if self.menuPosition < 9:
+                if self.menuPosition < 10:
                     self.menuPosition += 1
                 else:
                     self.menuPosition = 1
@@ -232,7 +234,7 @@ class Screen:
                 if self.menuPosition > 1:
                     self.menuPosition -= 1
                 else:
-                    self.menuPosition = 9
+                    self.menuPosition = 10
             elif screenInfo.button[0] == 13:
                 self.switchScreen(0)
             elif screenInfo.button[0] == 19:
@@ -321,6 +323,8 @@ class Screen:
             settings.inactivePeriod = value
         elif self.menuPosition == 9:
             settings.computerColor = value
+        elif self.menuPosition == 10:
+            settings.beep = value
         settings.isChanged = True
 
     def DrawMenu(self, settings):
@@ -345,9 +349,9 @@ class Screen:
                 self.lcd.lcd_display_string(" AFK time       ", 2)
                 afktime = str(settings.inactivePeriod)
                 self.lcd.lcd_display_string_pos(afktime, 2, 16 - len(afktime))
-            elif 8 < self.menuPosition:
+            elif 8 < self.menuPosition <= 10:
                 self.lcd.lcd_display_string(f" Bot color {settings.computerColor}", 1)
-                self.lcd.lcd_display_string("                ", 2)
+                self.lcd.lcd_display_string(f" Sounds      {settings.beep}", 2)
             self.lcd.lcd_display_string("*", 2 - self.menuPosition % 2)
             itemAssignment = [
                 settings.difficulty,
@@ -358,7 +362,8 @@ class Screen:
                 settings.chargeOutput,
                 settings.timePunishment,
                 settings.inactivePeriod,
-                settings.computerColor
+                settings.computerColor,
+                settings.beep
             ]
             index = self.rangeList[self.menuPosition-1].index(itemAssignment[self.menuPosition-1])
             self.selectedItem = [None, self.rangeList[self.menuPosition-1], index]
@@ -526,7 +531,7 @@ class Screen:
                 if self.noBlink:
                     self.noBlink = False
                 else:
-                    self.singleBlink()
+                    self.singleBlink(sound=2)
 
     def setTurn(self,color):
         if self.hintAvailable:
@@ -603,7 +608,8 @@ class Screen:
         self.singleBlink(0.2,2)
         self.toSetPromotion = False
 
-    def singleBlink(self, period=0.5, cycles=1):
+    def singleBlink(self, period=0.5, cycles=1, sound = 1):
+        self.toPlay = sound
         for i in range(cycles):
             self.lcd.backlight(False)
             time.sleep(period)
